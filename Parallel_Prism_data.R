@@ -2,33 +2,33 @@ rm(list = ls())
 library(prism)
 library(future.apply)
 gc()
-
-
-
 # Set your working directory and prism.path option
 
-loc <-  "C:/Users/Sangha/Documents/PRISM"
-setwd(loc)
+loc <- getwd()
 
+data_dir <- file.path(loc, "data")
+if (!dir.exists(data_dir)) {
+  dir.create(data_dir)
+}
 
 # Date range
-start_date <- as.Date("2016-01-01")
-end_date <- as.Date("2017-12-31")
+start_date <- as.Date("2001-01-01")
+end_date <- as.Date("2022-12-31")
 
 # Variable
-var_type <- "ppt"
+var_type <- "vpdmin"
 
 # Generate a sequence of dates for downloading
 dates <- seq(from = start_date, to = end_date, by = "day")
 
-# num_cores <- parallel::detectCores() - 10
+num_cores <- parallel::detectCores()
 # Set up parallel processing
 # plan(multisession, workers = num_cores) 
 
 plan(multisession) 
 # Function to download PRISM data for a single date
 download_prism_day <- function(date) {
-  options(prism.path = "./data/")                                                             # IMPORTANT Create a folder called data
+  options(prism.path = "./data/")
   prism::get_prism_dailys(type = var_type, minDate = date, maxDate = date, keepZip = FALSE)
 }
 
@@ -41,22 +41,58 @@ lapply.time # Done in 3 minutes
 #
 library(tidyverse)
 
-dates_ls <- seq(from = start_date, to = end_date, by = "day")
-dates_prism_txt <- str_remove_all(dates_ls, "-")
+dates_prism_txt <- str_remove_all(dates, "-")
+
+# Initialize the missing_folders vector
+missing_folders <- NULL
+
+max_attempts <- 2  # PRISM allows for 2 downloads in a single day, set as needed
+attempt <- 0
+
+repeat {
+  # Generate the list of expected folder names based on the dates
+  dates_prism_txt <- format(dates, "%Y%m%d")  # Remove dashes from dates for folder name generation
+  expected_folders <- paste0("PRISM_", var_type, "_stable_4kmD2_", dates_prism_txt, "_bil")
+  
+  # List the actual folders/files in your data directory
+  actual_folders <- list.files(path = "./data/")
+  
+  # Identify missing folders by comparing expected and actual folder names
+  missing_folders <- expected_folders[!expected_folders %in% actual_folders]
+  
+  if (length(missing_folders) == 0) {
+    message("All expected folders are present.")
+    break  # Exit if no missing folders
+  }
+  
+  # Extract dates from missing folder names for redownload
+  date_strings <- sub(paste0("PRISM_", var_type, "_stable_4kmD2_(\\d{8})_bil"), "\\1", missing_folders)
+  dates_to_redownload <- as.Date(date_strings, format = "%Y%m%d")
+  
+  # Redownload data for missing dates, if any
+  if (!all(is.na(dates_to_redownload))) {
+    future.apply::future_lapply(dates_to_redownload, download_prism_day, future.seed = TRUE)
+  }
+  
+  # Increment and check the attempt counter
+  attempt <- attempt + 1
+  if (attempt >= max_attempts) {
+    message("Maximum attempt limit reached. Check for any remaining missing folders.")
+    break  # Prevent infinite loop
+  }
+}
+
 
 library(sf)
 library(terra)
 
-#********* IMPORTANT ####################################
-#*create a vector file for sounties for specific state.
-#*Save and load in the process_day function.
-#*
+
 # load(paste0(loc,"/shape.rda"))
 # sc_counties <- shape %>%
 #   dplyr::filter(Name == "SOUTH CAROLINA")
 # sc_counties_vect <- vect(sc_counties)
 # rm(shape)
-# saveRDS(sc_counties_vect, file = paste0(loc, "/sc_counties_vect.rds"))
+
 
 
 # Create a function to process each day
